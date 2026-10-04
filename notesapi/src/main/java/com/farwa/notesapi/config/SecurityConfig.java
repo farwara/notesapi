@@ -17,7 +17,8 @@ public class SecurityConfig {
                                 "/api/notes/**",
                                 "/api/categories/**",
                                 "/api/tags/**",
-                                "/api/users/**"
+                                "/api/users/**",
+                                "/api/reminders/**"
                         ).permitAll()
                         .anyRequest().authenticated()
                 );
