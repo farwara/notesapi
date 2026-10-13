@@ -1,7 +1,7 @@
 package com.farwa.notesapi.repository;
 
-import com.farwa.notesapi.model.Note;
+import com.farwa.notesapi.model.Attachment;
 import org.springframework.data.jpa.repository.JpaRepository;
 
-public interface AttachmentRepository extends JpaRepository<Note, Long> {
+public interface AttachmentRepository extends JpaRepository<Attachment, Long> {
 }

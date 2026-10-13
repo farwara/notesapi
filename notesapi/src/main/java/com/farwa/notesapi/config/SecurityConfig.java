@@ -18,7 +18,8 @@ public class SecurityConfig {
                                 "/api/categories/**",
                                 "/api/tags/**",
                                 "/api/users/**",
-                                "/api/reminders/**"
+                                "/api/reminders/**",
+                                "/api/attachments/**"
                         ).permitAll()
                         .anyRequest().authenticated()
                 );

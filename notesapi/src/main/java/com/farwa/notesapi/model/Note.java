@@ -47,4 +47,6 @@ public class Note {
     private List<Tag> tags;
     @OneToOne(mappedBy = "note")
     private Reminder reminder;
+    @OneToOne(mappedBy = "note")
+    private Attachment attachment;
 }
