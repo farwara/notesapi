@@ -1,3 +1,4 @@
+
 package com.farwa.notesapi.service;
 
 import com.farwa.notesapi.dto.AttachmentResponseDto;
@@ -13,11 +14,17 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
+import java.util.Set;
+import java.util.UUID;
 
 @Service
 public class AttachmentService {
+
+    private static final long MAX_FILE_SIZE = 5 * 1024 * 1024;
+
+    private static final Set<String> ALLOWED_FILE_TYPES =
+            Set.of("application/pdf", "image/jpeg", "image/png");
 
     private final Path uploadDirectory = Paths.get("uploads");
 
@@ -32,83 +39,124 @@ public class AttachmentService {
         this.noteRepository = noteRepository;
     }
 
-    // UPLOAD
+    // UPLOAD ATTACHMENT
     public AttachmentResponseDto uploadAttachment(
             Long noteId,
             MultipartFile file) {
 
+        // 1. Check if the file is empty
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Please upload a non-empty file");
+        }
+
+        // 2. Check the file size
+        if (file.getSize() > MAX_FILE_SIZE) {
+            throw new IllegalArgumentException(
+                    "File size must not exceed 5 MB");
+        }
+
+        // 3. Check the file type
+        String fileType = file.getContentType();
+
+        if (fileType == null ||
+                !ALLOWED_FILE_TYPES.contains(fileType)) {
+            throw new IllegalArgumentException(
+                    "Only PDF, JPG and PNG files are allowed");
+        }
+
+        // 4. Find the Note
         Note note = noteRepository.findById(noteId)
                 .orElseThrow(() ->
-                        new ResourceNotFoundException("Note not found"));
+                        new ResourceNotFoundException(
+                                "Note not found"));
 
-        try {
-            Files.createDirectories(uploadDirectory);
-        } catch (IOException exception) {
-            throw new RuntimeException(
-                    "Could not create upload directory",
-                    exception
-            );
+        // 5. Check if the Note already has an attachment
+        if (note.getAttachment() != null) {
+            throw new IllegalArgumentException(
+                    "This note already has an attachment");
         }
 
+        // 6. Check the original filename
         String originalFileName = file.getOriginalFilename();
 
-        if (originalFileName == null || originalFileName.isBlank()) {
-            throw new IllegalArgumentException("File must have a name");
+        if (originalFileName == null ||
+                originalFileName.isBlank()) {
+            throw new IllegalArgumentException(
+                    "File must have a name");
         }
 
-        String safeFileName = Paths.get(originalFileName)
-                .getFileName()
-                .toString();
+        // 7. Keep a simple, safe display name
+        String safeFileName = originalFileName
+                .replace("\\", "/");
 
-        Path filePath = uploadDirectory.resolve(safeFileName);
+        safeFileName = safeFileName.substring(
+                safeFileName.lastIndexOf("/") + 1);
 
+        if (safeFileName.isBlank() ||
+                safeFileName.equals(".") ||
+                safeFileName.equals("..")) {
+            throw new IllegalArgumentException(
+                    "Invalid filename");
+        }
+
+        // 8. Generate a unique stored filename
+        String storedFileName = UUID.randomUUID().toString();
+
+        Path filePath = uploadDirectory.resolve(storedFileName);
+
+        // 9. Save the physical file
         try {
-            Files.copy(
-                    file.getInputStream(),
-                    filePath,
-                    StandardCopyOption.REPLACE_EXISTING
-            );
+            Files.createDirectories(uploadDirectory);
+
+            Files.copy(file.getInputStream(), filePath);
+
         } catch (IOException exception) {
             throw new RuntimeException(
                     "Could not save uploaded file",
-                    exception
-            );
+                    exception);
         }
 
+        // 10. Create the Attachment entity
         Attachment attachment = new Attachment();
 
         attachment.setFileName(safeFileName);
-        attachment.setFileType(file.getContentType());
+        attachment.setFileType(fileType);
         attachment.setFilePath(filePath.toString());
         attachment.setUploadDate(LocalDateTime.now());
         attachment.setNote(note);
 
-        Attachment savedAttachment =
-                attachmentRepository.save(attachment);
+        // 11. Save the metadata in PostgreSQL
+        Attachment savedAttachment;
 
+        try {
+            savedAttachment = attachmentRepository.saveAndFlush(
+                    attachment);
+        } catch (RuntimeException exception) {
+            try {
+                Files.deleteIfExists(filePath);
+            } catch (IOException cleanupException) {
+                exception.addSuppressed(cleanupException);
+            }
+            throw exception;
+        }
+
+        // 12. Return the response DTO
         return mapToResponseDto(savedAttachment);
     }
-
 
     // GET ATTACHMENT INFORMATION
     public AttachmentResponseDto getAttachmentById(Long id) {
 
-        Attachment attachment = attachmentRepository.findById(id)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException(
-                                "Attachment not found"));
+        Attachment attachment = getAttachmentEntity(id);
 
         return mapToResponseDto(attachment);
     }
 
-
-    // GET THE ACTUAL FILE FOR DOWNLOAD
+    // DOWNLOAD ATTACHMENT
     public byte[] downloadAttachment(Long id) {
 
-        Attachment attachment = attachmentRepository.findById(id)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException(
-                                "Attachment not found"));
+        Attachment attachment = getAttachmentEntity(id);
 
         Path filePath = Paths.get(attachment.getFilePath());
 
@@ -116,14 +164,12 @@ public class AttachmentService {
             return Files.readAllBytes(filePath);
         } catch (IOException exception) {
             throw new RuntimeException(
-                    "Could not read attachment file",
-                    exception
-            );
+                    "Could not download attachment",
+                    exception);
         }
     }
 
-
-    // Used by the controller when downloading
+    // GET ATTACHMENT ENTITY
     public Attachment getAttachmentEntity(Long id) {
 
         return attachmentRepository.findById(id)
@@ -132,25 +178,12 @@ public class AttachmentService {
                                 "Attachment not found"));
     }
 
-
-    // DELETE
+    // DELETE ATTACHMENT
     public void deleteAttachment(Long id) {
 
-        Attachment attachment = attachmentRepository.findById(id)
-                .orElseThrow(() ->
-                        new ResourceNotFoundException(
-                                "Attachment not found"));
+        Attachment attachment = getAttachmentEntity(id);
 
         Path filePath = Paths.get(attachment.getFilePath());
-
-        try {
-            Files.deleteIfExists(filePath);
-        } catch (IOException exception) {
-            throw new RuntimeException(
-                    "Could not delete attachment file",
-                    exception
-            );
-        }
 
         Note note = attachment.getNote();
 
@@ -159,10 +192,16 @@ public class AttachmentService {
         }
 
         attachmentRepository.delete(attachment);
+        try {
+            Files.deleteIfExists(filePath);
+        } catch (IOException exception) {
+            throw new RuntimeException(
+                    "Attachment metadata was deleted, but the file could not be removed",
+                    exception);
+        }
     }
 
-
-    // ENTITY -> DTO
+    // CONVERT ENTITY TO RESPONSE DTO
     private AttachmentResponseDto mapToResponseDto(
             Attachment attachment) {
 
