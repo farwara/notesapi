@@ -4,6 +4,7 @@ import com.farwa.notesapi.dto.AppUserRequestDto;
 import com.farwa.notesapi.dto.AppUserResponseDto;
 import com.farwa.notesapi.model.AppUser;
 import com.farwa.notesapi.repository.AppUserRepository;
+
 import org.springframework.stereotype.Service;
 
 @Service
